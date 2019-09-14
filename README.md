@@ -24,6 +24,8 @@ This file includes:
 - Input RGB images (from [Perspective Transformer Nets](https://github.com/xcyan/nips16_PTN))
 - Pre-rendered depth images for training
 - Ground-truth point clouds of the test split (densified to 100K points)
+- The fixed depth map means the fixed view point for the first stage training
+- The no prefix(novel) depth map means the random view point for the second stage joint 2D optimization
 
 After downloading, run `tar -zxf s4lkm5ej7sh4px72vesr17b1gxam4hgy.gz` under the main directory. The files will be extracted to the `data` directory.
 (Please also cite the relevant papers if you plan to use this dataset package.)
