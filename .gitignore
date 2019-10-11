@@ -5,8 +5,8 @@ models/
 # Logs
 logs/
 # Data symlinks
-data/
 !data/trans_fuse8.npy
+render/output/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

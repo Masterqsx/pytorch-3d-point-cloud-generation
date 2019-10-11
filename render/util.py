@@ -1,5 +1,149 @@
 import numpy as np
 import bpy
+import json
+import os
+import random
+from tqdm import tqdm
+
+def load_clevr_config(properties_json):
+	with open(properties_json, 'r') as f:
+		properties = json.load(f)
+		color_name_to_rgba = {}
+		for name, rgb in properties['colors'].items():
+			rgba = [float(c) / 255.0 for c in rgb] + [1.0]
+			color_name_to_rgba[name] = rgba
+		material_mapping = [(v, k) for k, v in properties['materials'].items()]
+		object_mapping = [(v, k) for k, v in properties['shapes'].items()]
+		size_mapping = list(properties['sizes'].items())
+
+	return (material_mapping, object_mapping, size_mapping, color_name_to_rgba)
+
+def generate_clevr_object(mapping):
+	material_mapping, object_mapping, size_mapping, color_name_to_rgba = mapping
+
+	combos = []
+	for size_name, r in size_mapping:
+		for obj_name, obj_name_out in object_mapping:
+			for color_name, rgba in color_name_to_rgba.items():
+				for mat_name, mat_name_out in material_mapping:
+					if obj_name == 'Cube':
+						r /= math.sqrt(2)
+					theta = 360.0 * random.random()
+					combos.append((size_name, r, obj_name, obj_name_out, color_name, rgba, mat_name, mat_name_out, theta))
+
+	return combos
+
+
+	# size_name, r = random.choice(size_mapping)
+	# obj_name, obj_name_out = random.choice(object_mapping)
+	# color_name, rgba = random.choice(list(color_name_to_rgba.items()))
+	# if obj_name == 'Cube':
+	# 	r /= math.sqrt(2)
+	# theta = 360.0 * random.random()
+	# add_object(shape_dir, obj_name, r, (0, 0), theta=theta)
+	# mat_name, mat_name_out = random.choice(material_mapping)
+	# add_material(mat_name, Color=rgba)
+
+
+
+def add_object(object_dir, name, scale, loc, theta=0):
+  """
+  Load an object from a file. We assume that in the directory object_dir, there
+  is a file named "$name.blend" which contains a single object named "$name"
+  that has unit size and is centered at the origin.
+
+  - scale: scalar giving the size that the object should be in the scene
+  - loc: tuple (x, y) giving the coordinates on the ground plane where the
+    object should be placed.
+  """
+  # First figure out how many of this object are already in the scene so we can
+  # give the new object a unique name
+  count = 0
+  for obj in bpy.data.objects:
+    if obj.name.startswith(name):
+      count += 1
+
+  filename = os.path.join(object_dir, '%s.blend' % name, 'Object', name)
+  bpy.ops.wm.append(filename=filename)
+
+  # Give it a new name to avoid conflicts
+  new_name = '%s_%d' % (name, count)
+  bpy.data.objects[name].name = new_name
+
+  # Set the new object as active, then rotate, scale, and translate it
+  x, y = loc
+  bpy.context.scene.objects.active = bpy.data.objects[new_name]
+  bpy.context.object.rotation_euler[2] = theta
+  bpy.ops.transform.resize(value=(scale, scale, scale))
+  bpy.ops.transform.translate(value=(x, y, scale))
+  bpy.ops.object.origin_set(type='GEOMETRY_ORIGIN')
+  bpy.ops.object.location_clear()
+
+
+def load_materials(material_dir):
+  """
+  Load materials from a directory. We assume that the directory contains .blend
+  files with one material each. The file X.blend has a single NodeTree item named
+  X; this NodeTree item must have a "Color" input that accepts an RGBA value.
+  """
+  for fn in os.listdir(material_dir):
+    if not fn.endswith('.blend'): continue
+    name = os.path.splitext(fn)[0]
+    filepath = os.path.join(material_dir, fn, 'NodeTree', name)
+    bpy.ops.wm.append(filename=filepath)
+
+
+def add_material(name, **properties):
+  """
+  Create a new material and assign it to the active object. "name" should be the
+  name of a material that has been previously loaded using load_materials.
+  """
+  # Figure out how many materials are already in the scene
+  mat_count = len(bpy.data.materials)
+
+  # Create a new material; it is not attached to anything and
+  # it will be called "Material"
+  bpy.ops.material.new()
+
+  # Get a reference to the material we just created and rename it;
+  # then the next time we make a new material it will still be called
+  # "Material" and we will still be able to look it up by name
+  mat = bpy.data.materials['Material']
+  mat.name = 'Material_%d' % mat_count
+  mat.use_nodes = True
+
+  # Attach the new material to the active object
+  # Make sure it doesn't already have materials
+  obj = bpy.context.active_object
+  assert len(obj.data.materials) == 0
+  obj.data.materials.append(mat)
+
+  # Find the output node of the new material
+  output_node = None
+  for n in mat.node_tree.nodes:
+    if n.name == 'Material Output':
+      output_node = n
+      break
+
+  # Add a new GroupNode to the node tree of the active material,
+  # and copy the node tree from the preloaded node group to the
+  # new group node. This copying seems to happen by-value, so
+  # we can create multiple materials of the same type without them
+  # clobbering each other
+  group_node = mat.node_tree.nodes.new('ShaderNodeGroup')
+  group_node.node_tree = bpy.data.node_groups[name]
+
+  # Find and set the "Color" input of the new group node
+  for inp in group_node.inputs:
+    if inp.name in properties:
+      inp.default_value = properties[inp.name]
+
+  # Wire the output of the new group node to the input of
+  # the MaterialOutput node
+  mat.node_tree.links.new(
+      group_node.outputs['Shader'],
+      output_node.inputs['Surface'],
+  )
 
 def setupBlender(buffer_path,RESOLUTION):
 	scene = bpy.context.scene
@@ -8,6 +152,7 @@ def setupBlender(buffer_path,RESOLUTION):
 	camera.data.ortho_scale = 1
 	# compositor nodes
 	scene.render.use_antialiasing = False
+	scene.render.engine = "CYCLES"
 	scene.render.alpha_mode = "TRANSPARENT"
 	scene.render.image_settings.color_depth = "16"
 	scene.render.image_settings.color_mode = "RGBA"
@@ -21,8 +166,8 @@ def setupBlender(buffer_path,RESOLUTION):
 	fo = tree.nodes.new("CompositorNodeOutputFile")
 	fo.base_path = buffer_path
 	fo.format.file_format = "OPEN_EXR"
-	fo.file_slots.new("Z")
-	tree.links.new(rl.outputs["Z"],fo.inputs["Z"])
+	fo.file_slots.new('Depth')
+	tree.links.new(rl.outputs['Depth'],fo.inputs['Depth'])
 	scene.render.resolution_x = RESOLUTION
 	scene.render.resolution_y = RESOLUTION
 	scene.render.resolution_percentage = 100
